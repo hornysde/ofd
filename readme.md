@@ -4,7 +4,7 @@ Brutally simple, lighting fast. One script that gets everything you paid for (DR
 
 ## Usage
 
-1. Setup Python virtual environment. Python 3.11 or higher recommended.
+1. Setup Python virtual environment. Python 3.10 or higher recommended.
 
    ```
    python -m venv .venv
