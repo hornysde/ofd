@@ -1,0 +1,7 @@
+tqdm
+aiohttp
+pydantic
+pydantic_xml
+requests
+pywidevine
+pyffmpeg
