@@ -336,7 +336,8 @@ class Session:
 
 
 class OnlyFans:
-    count_per_page = 20
+    # This is the max count server can return
+    count_per_page = 50
     count_per_batch = 200
     max_batch_count = 100
 
