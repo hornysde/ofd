@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Literal, Any, ClassVar, Iterable, Mapping, AsyncGenerator
+from typing import Literal, Any, ClassVar, Iterable, Mapping, AsyncGenerator, Sequence
 from dataclasses import dataclass
 
 import time
@@ -15,18 +15,20 @@ import pydantic_xml
 import aiohttp
 import requests
 import pywidevine
-import pyffmpeg
+import pyffmpeg  # type: ignore
 
 from tqdm import tqdm
 
 
 class Endpoint:
+    @staticmethod
     def _formatted(url_template: str):
         def format(**kwargs):
             return url_template.format(**kwargs)
 
         return format
 
+    @staticmethod
     def _paged(url_template: str):
         def generate_pages(
             *, count: int, count_per_page: int, offset: int = 0, **kwargs
@@ -141,7 +143,7 @@ class CDMInfo(pydantic.BaseModel):
 
     def make_cdm(self) -> pywidevine.Cdm | None:
         if not self.is_valid():
-            return
+            return None
         with open(self.client_id_path, "rb") as f:
             client_id = f.read()
         with open(self.private_key_path, "rb") as f:
@@ -313,6 +315,7 @@ class Session:
         return headers
 
     async def get(self, url: str, cookies: Mapping[str, str] | None = None):
+        assert self.session is not None
         return await self.session.get(
             url, headers=self.make_headers(url), cookies=cookies
         )
@@ -322,11 +325,13 @@ class Session:
         return await response.json()
 
     async def head(self, url: str, cookies: Mapping[str, str] | None = None):
+        assert self.session is not None
         return await self.session.head(
             url, headers=self.make_headers(url), cookies=cookies
         )
 
-    async def post(self, url: str, data: str):
+    async def post(self, url: str, data: Any):
+        assert self.session is not None
         return await self.session.post(url, data=data, headers=self.make_headers(url))
 
 
@@ -344,7 +349,7 @@ class OnlyFans:
         auth = AuthInfo.model_validate(auth)
         sign = SignInfo.model_validate(sign) if sign else SignInfo.from_download()
         self.session = Session(auth, sign)
-        self.cdm = cdm.make_cdm() if cdm else None
+        self.cdm = CDMInfo.model_validate(cdm).make_cdm() if cdm else None
         self.me: Me | None = None
         # Cache
         self.users: dict[int, User] = {}
@@ -366,7 +371,7 @@ class OnlyFans:
         self.posts.clear()
         self.posts_archived.clear()
 
-    async def connect(self) -> Me:
+    async def connect(self):
         await self.session.create()
         self.me = Me.model_validate(await self.session.get_json(Endpoint.me))
 
@@ -387,6 +392,8 @@ class OnlyFans:
     async def get_subscriptions(self) -> list[Subscription]:
         if self.subscriptions is not None:
             return self.subscriptions
+
+        assert self.me is not None
 
         coroutines = [
             self.session.get_json(url)
@@ -466,7 +473,7 @@ class OnlyFans:
             return messages
 
         # Number of messages is unknown beforehand, send request iteratively
-        messages = []
+        messages: list[Post] = []
         for i in range(self.max_batch_count):
             coroutines = [
                 request_messages(url)
@@ -495,7 +502,9 @@ class OnlyFans:
         return int(response.headers.get("Content-Length", 0))
 
     async def get_contents_size(
-        self, urls: list[str], cookie_jars: Iterable[Mapping[str, str]] | None = None
+        self,
+        urls: Sequence[str],
+        cookie_jars: Iterable[Mapping[str, str] | None] | None = None,
     ) -> AsyncGenerator[int]:
         cookie_jars = cookie_jars or [None] * len(urls)
         for size_future in asyncio.as_completed(
@@ -554,9 +563,9 @@ class Downloader:
 
     async def download_files(
         self,
-        urls: Iterable[str],
+        urls: Sequence[str],
         progress: tqdm,
-        cookie_jars: Iterable[Mapping[str, str]] | None = None,
+        cookie_jars: Iterable[Mapping[str, str] | None] | None = None,
     ) -> list[str]:
         async for size in self.api.get_contents_size(urls, cookie_jars):
             progress.total += size
@@ -674,7 +683,10 @@ class Downloader:
             name, extension = self.video.base_url.rsplit(".", 1)
             return f"{name}_drm.{extension}"
 
-    async def download_medias_drm(self, drm_medias: DRMMedia):
+    async def download_medias_drm(self, drm_medias: Sequence[DRMMedia]):
+        if self.api.cdm is None:
+            return
+
         # Get DASH manifest
 
         progress = tqdm(
@@ -682,6 +694,7 @@ class Downloader:
         )
 
         async def add_manifest(drm: Downloader.DRMMedia):
+            assert drm.media.files.drm is not None
             response = await self.api.session.get(
                 drm.media.files.drm.manifest.dash, drm.media.files.drm.signature.dash
             )
@@ -716,6 +729,10 @@ class Downloader:
         urls = []
         cookies = []
         for drm in drms:
+            assert drm.video is not None
+            assert drm.audio is not None
+            assert drm.media.files.drm is not None
+
             if not self.is_file_downloaded(drm.video.base_url):
                 urls.append(drm.video_url)
                 cookies.append(drm.media.files.drm.signature.dash)
@@ -732,6 +749,10 @@ class Downloader:
         ffmpeg = pyffmpeg.FFmpeg()
         scheduled_time = time.monotonic()
         for drm in drms:
+            assert drm.video is not None
+            assert drm.audio is not None
+            assert drm.protection is not None
+
             # Limit the rate of key request
             await asyncio.sleep(scheduled_time - time.monotonic())
             scheduled_time += self.key_request_period_s
