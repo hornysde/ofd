@@ -193,7 +193,7 @@ class Subscription(pydantic.BaseModel):
 
 class Media(pydantic.BaseModel):
     id: int
-    type: Literal["photo", "video", "audio"]
+    type: Literal["photo", "video", "audio", "gif"]
     files: Files
 
     class Files(pydantic.BaseModel):
