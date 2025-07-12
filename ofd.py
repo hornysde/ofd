@@ -16,6 +16,7 @@ import aiohttp
 import requests
 import pywidevine
 import pyffmpeg  # type: ignore
+import tenacity
 
 from tqdm import tqdm
 
@@ -314,25 +315,54 @@ class Session:
         headers.update(self.sign.make_header(url))
         return headers
 
+    @tenacity.retry(
+        stop=tenacity.stop_after_attempt(5),
+        wait=tenacity.wait_exponential(multiplier=1, min=1, max=10),
+        retry=tenacity.retry_if_exception_type(aiohttp.ClientError),
+    )
     async def get(self, url: str, cookies: Mapping[str, str] | None = None):
         assert self.session is not None
-        return await self.session.get(
+        response = await self.session.get(
             url, headers=self.make_headers(url), cookies=cookies
         )
+        # Retry on server errors
+        if response.status in [429, 502, 503, 504]:
+            response.raise_for_status()
+        return response
 
     async def get_json(self, url: str) -> dict[str, Any]:
         response = await self.get(url)
         return await response.json()
 
+    @tenacity.retry(
+        stop=tenacity.stop_after_attempt(5),
+        wait=tenacity.wait_exponential(multiplier=1, min=1, max=10),
+        retry=tenacity.retry_if_exception_type(aiohttp.ClientError),
+    )
     async def head(self, url: str, cookies: Mapping[str, str] | None = None):
         assert self.session is not None
-        return await self.session.head(
+        response = await self.session.head(
             url, headers=self.make_headers(url), cookies=cookies
         )
+        # Retry on server errors
+        if response.status in [429, 502, 503, 504]:
+            response.raise_for_status()
+        return response
 
+    @tenacity.retry(
+        stop=tenacity.stop_after_attempt(5),
+        wait=tenacity.wait_exponential(multiplier=1, min=1, max=10),
+        retry=tenacity.retry_if_exception_type(aiohttp.ClientError),
+    )
     async def post(self, url: str, data: Any):
         assert self.session is not None
-        return await self.session.post(url, data=data, headers=self.make_headers(url))
+        response = await self.session.post(
+            url, data=data, headers=self.make_headers(url)
+        )
+        # Retry on server errors
+        if response.status in [429, 502, 503, 504]:
+            response.raise_for_status()
+        return response
 
 
 class OnlyFans:

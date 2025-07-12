@@ -66,6 +66,8 @@ requests==2.32.4
     # via
     #   -r requirements.in
     #   pywidevine
+tenacity==9.1.2
+    # via -r requirements.in
 tqdm==4.67.1
     # via -r requirements.in
 typing-extensions==4.14.1
