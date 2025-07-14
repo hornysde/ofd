@@ -913,8 +913,7 @@ class Downloader:
 
 
 def print_result(counts: tuple[int, int]):
-    for word, num in zip(("New", "Existing"), counts):
-        print(f"{word:<15}{num:>7}")
+    print(f"new | existing {counts[0]:>7} | {counts[1]:>7}")
 
 
 async def main():
