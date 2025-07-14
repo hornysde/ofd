@@ -8,6 +8,8 @@ aiohappyeyeballs==2.6.1
     # via aiohttp
 aiohttp==3.12.13
     # via -r requirements.in
+aiolimiter==1.2.1
+    # via -r requirements.in
 aiosignal==1.4.0
     # via aiohttp
 annotated-types==0.7.0

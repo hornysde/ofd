@@ -17,6 +17,7 @@ import requests
 import pywidevine
 import pyffmpeg  # type: ignore
 import tenacity
+import aiolimiter
 
 from tqdm import tqdm
 
@@ -295,6 +296,11 @@ class Session:
         self.auth = auth
         self.sign = sign
         self.session: aiohttp.ClientSession | None = None
+        # Measured rate limit 100req/40s, 120req/60s
+        self.api_rate_limiter = aiolimiter.AsyncLimiter(1, 0.5)
+        # Measured rate limit 4req/10s
+        # Avoid "CloudFlare Error 1015: You are being rate limited"
+        self.drm_rate_limiter = aiolimiter.AsyncLimiter(1, 2.5)
 
     async def create(self):
         await self.close()
@@ -320,18 +326,26 @@ class Session:
         wait=tenacity.wait_exponential(multiplier=1, min=1, max=10),
         retry=tenacity.retry_if_exception_type(aiohttp.ClientError),
     )
-    async def get(self, url: str, cookies: Mapping[str, str] | None = None):
+    async def get(
+        self,
+        url: str,
+        cookies: Mapping[str, str] | None = None,
+        rate_limit: bool = False,
+    ):
         assert self.session is not None
+        if rate_limit:
+            await self.api_rate_limiter.acquire()
         response = await self.session.get(
             url, headers=self.make_headers(url), cookies=cookies
         )
         # Retry on server errors
         if response.status in [429, 502, 503, 504]:
             response.raise_for_status()
+
         return response
 
     async def get_json(self, url: str) -> dict[str, Any]:
-        response = await self.get(url)
+        response = await self.get(url, rate_limit=True)
         return await response.json()
 
     @tenacity.retry(
@@ -356,6 +370,7 @@ class Session:
     )
     async def post(self, url: str, data: Any):
         assert self.session is not None
+        await self.drm_rate_limiter.acquire()
         response = await self.session.post(
             url, data=data, headers=self.make_headers(url)
         )
@@ -548,9 +563,6 @@ class OnlyFans:
 
 
 class Downloader:
-    # This is as fast as it can go without triggering "CloudFlare Error 1015: You are being rate limited"
-    key_request_period_s = 2.5
-
     def __init__(self, api: OnlyFans, user: User, directory: str):
         self.api = api
         self.user = user
@@ -778,15 +790,10 @@ class Downloader:
         progress = tqdm(total=len(drms), leave=False, desc="Decrypting drm")
         cdm = self.api.cdm
         ffmpeg = pyffmpeg.FFmpeg()
-        scheduled_time = time.monotonic()
         for drm in drms:
             assert drm.video is not None
             assert drm.audio is not None
             assert drm.protection is not None
-
-            # Limit the rate of key request
-            await asyncio.sleep(scheduled_time - time.monotonic())
-            scheduled_time += self.key_request_period_s
 
             # Skip duplicated media
             # If raw file does not exist here, it means it appeared before and has been processed

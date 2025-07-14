@@ -6,3 +6,4 @@ requests
 pywidevine
 pyffmpeg
 tenacity
+aiolimiter
