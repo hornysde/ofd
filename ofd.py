@@ -13,7 +13,6 @@ import hashlib
 import pydantic
 import pydantic_xml
 import aiohttp
-import requests
 import pywidevine
 import pyffmpeg  # type: ignore
 import tenacity
@@ -73,8 +72,11 @@ class SignInfo(pydantic.BaseModel):
     app_token: str
 
     @classmethod
-    def from_download(cls) -> SignInfo:
-        return SignInfo.model_validate(requests.get(Endpoint.sign_info).json())
+    async def from_download(cls) -> SignInfo:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(Endpoint.sign_info) as response:
+                data = await response.text()
+                return SignInfo.model_validate_json(data)
 
     def sign(self, url: str, current_time: str) -> str:
         parsed = urllib.parse.urlparse(url)
@@ -393,7 +395,7 @@ class OnlyFans:
         sign: SignInfo | dict | None = None,
     ):
         auth = AuthInfo.model_validate(auth)
-        sign = SignInfo.model_validate(sign) if sign else SignInfo.from_download()
+        sign = SignInfo.model_validate(sign)
         self.session = Session(auth, sign)
         self.cdm = CDMInfo.model_validate(cdm).make_cdm() if cdm else None
         self.me: Me | None = None
@@ -937,7 +939,8 @@ async def main():
         config_text = f.read()
         auth = AuthInfo.model_validate_json(config_text)
         cdm = CDMInfo.model_validate_json(config_text)
-    async with OnlyFans(auth=auth, cdm=cdm) as api:
+    sign = await SignInfo.from_download()
+    async with OnlyFans(auth=auth, cdm=cdm, sign=sign) as api:
         print(f"Logged in as {api.me.name}")
         for downloader in await Downloader.for_subscriptions(api, args.output):
             print(f"====== {downloader.user.name}")

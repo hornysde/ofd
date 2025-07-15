@@ -2,5 +2,4 @@
 pip-tools
 ruff
 mypy
-types-requests
 types-tqdm

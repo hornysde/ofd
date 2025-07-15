@@ -65,9 +65,7 @@ pywidevine==1.8.0
 pyyaml==6.0.2
     # via pywidevine
 requests==2.32.4
-    # via
-    #   -r requirements.in
-    #   pywidevine
+    # via pywidevine
 tenacity==9.1.2
     # via -r requirements.in
 tqdm==4.67.1
