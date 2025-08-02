@@ -327,6 +327,7 @@ class Session:
         stop=tenacity.stop_after_attempt(5),
         wait=tenacity.wait_exponential(multiplier=1, min=1, max=10),
         retry=tenacity.retry_if_exception_type(aiohttp.ClientError),
+        reraise=True,
     )
     async def get(
         self,
@@ -354,6 +355,7 @@ class Session:
         stop=tenacity.stop_after_attempt(5),
         wait=tenacity.wait_exponential(multiplier=1, min=1, max=10),
         retry=tenacity.retry_if_exception_type(aiohttp.ClientError),
+        reraise=True,
     )
     async def head(self, url: str, cookies: Mapping[str, str] | None = None):
         assert self.session is not None
@@ -369,6 +371,7 @@ class Session:
         stop=tenacity.stop_after_attempt(5),
         wait=tenacity.wait_exponential(multiplier=1, min=1, max=10),
         retry=tenacity.retry_if_exception_type(aiohttp.ClientError),
+        reraise=True,
     )
     async def post(self, url: str, data: Any):
         assert self.session is not None
