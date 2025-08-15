@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ofd"
+version = "0.1.0"
+description = "Brutally simple, lighting fast OnlyFans downloader"
+readme = "readme.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.10"
+
+dependencies = [
+    "tqdm",
+    "aiohttp",
+    "pydantic",
+    "pydantic-xml",
+    "pywidevine",
+    "pyffmpeg",
+    "tenacity",
+    "aiolimiter",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pip-tools",
+    "ruff",
+    "mypy",
+    "types-tqdm",
+]
+
+[project.scripts]
+ofd = "ofd:main"
+
+[tool.setuptools]
+py-modules = ["ofd"]

@@ -921,7 +921,7 @@ def print_result(counts: tuple[int, int]):
     print(f"new | existing {counts[0]:>7} | {counts[1]:>7}")
 
 
-async def main():
+async def async_main():
     # Shut pyffmpeg up
     logging.getLogger("pyffmpeg").handlers = []
 
@@ -963,5 +963,10 @@ async def main():
             # TODO: download paid post and stories (stories, archived_stories, highlights)
 
 
+def main():
+    """Entry point for console script."""
+    asyncio.run(async_main())
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

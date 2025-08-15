@@ -4,12 +4,12 @@ Brutally simple, lighting fast. One script that gets everything you paid for (DR
 
 ## Usage
 
-1. Setup Python virtual environment. Python 3.10 or higher recommended.
+1. Install this package. Use editable mode (`-e`) in case any troubleshooting is required. Python 3.10 or higher recommended.
 
    ```
-   python -m venv .venv
+   python3.10 -m venv .venv
    source .venv/bin/activate
-   pip install -r requirements.txt
+   pip install -c requirements.txt -e .
    ```
 
 1. Make a copy of `config.json.tpl` and name it `config.json`.
@@ -29,7 +29,7 @@ Brutally simple, lighting fast. One script that gets everything you paid for (DR
 1. Run the script. Your content will be waiting for you in `downloads/`.
 
    ```
-   python ofd.py
+   ofd
    ```
 
 ## About

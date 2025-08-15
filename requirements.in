@@ -1,8 +1,0 @@
-tqdm
-aiohttp
-pydantic
-pydantic_xml
-pywidevine
-pyffmpeg
-tenacity
-aiolimiter
