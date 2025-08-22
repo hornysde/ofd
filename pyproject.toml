@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ofd"
 version = "0.1.0"
 description = "Brutally simple, lighting fast OnlyFans downloader"
+authors = [{name = "hornysde", email = "hornysde@proton.me"}]
 readme = "readme.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.10"
