@@ -306,7 +306,11 @@ class Session:
 
     async def create(self):
         await self.close()
-        self.session = aiohttp.ClientSession(cookies=self.auth.cookie.model_dump())
+        self.session = aiohttp.ClientSession(
+            cookies=self.auth.cookie.model_dump(),
+            # Disable total timeout, large video files need a long time to download
+            timeout=aiohttp.ClientTimeout(total=None, sock_read=300)
+        )
 
     async def close(self):
         if self.session is None:
