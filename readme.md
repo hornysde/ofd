@@ -4,6 +4,8 @@ Brutally simple, lighting fast. One script that gets everything you paid for (DR
 
 ## Usage
 
+> **Setting up with an AI agent?** [`config-setup.md`](config-setup.md) is a skill for filling in `config.json` automatically with a browser MCP (e.g. `chrome-devtools-mcp`) - it covers steps 2–4 below.
+
 1. Install this package. Use editable mode (`-e`) in case any troubleshooting is required. Python 3.10 or higher recommended.
 
    ```
