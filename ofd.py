@@ -163,6 +163,19 @@ class CDMInfo(pydantic.BaseModel):
         )
 
 
+DEFAULT_OUTPUT = "downloads"
+
+
+class OutputInfo(pydantic.BaseModel):
+    output: str = DEFAULT_OUTPUT
+
+    @pydantic.field_validator("output", mode="after")
+    @classmethod
+    def fallback_if_empty(cls, value: str) -> str:
+        # Treat an empty or whitespace-only value as unset
+        return value.strip() or DEFAULT_OUTPUT
+
+
 class User(pydantic.BaseModel):
     id: int
     name: str
@@ -937,8 +950,9 @@ async def async_main():
     )
     parser.add_argument(
         "--output",
-        default="downloads",
-        help="Directory to save the downloaded media (default: downloads).",
+        default=None,
+        help="Directory to save the downloaded media. Overrides the 'output' "
+        f"field in the config (default: {DEFAULT_OUTPUT}).",
     )
     args = parser.parse_args()
 
@@ -946,10 +960,12 @@ async def async_main():
         config_text = f.read()
         auth = AuthInfo.model_validate_json(config_text)
         cdm = CDMInfo.model_validate_json(config_text)
+        output_info = OutputInfo.model_validate_json(config_text)
+    output = args.output or output_info.output
     sign = await SignInfo.from_download()
     async with OnlyFans(auth=auth, cdm=cdm, sign=sign) as api:
         print(f"Logged in as {api.me.name}")
-        for downloader in await Downloader.for_subscriptions(api, args.output):
+        for downloader in await Downloader.for_subscriptions(api, output):
             print(f"====== {downloader.user.name}")
             print("== Avatar and header")
             print_result(await downloader.download_profile())
