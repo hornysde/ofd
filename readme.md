@@ -1,6 +1,6 @@
 # OnlyFans Downloader
 
-Brutally simple, lighting fast. One script that gets everything you paid for (DRM included).
+Brutally simple, lightning fast. One script that gets everything you paid for (DRM included).
 
 ## Usage
 
