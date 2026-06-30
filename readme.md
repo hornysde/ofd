@@ -4,7 +4,8 @@ Brutally simple, lightning fast. One script that gets everything you paid for (D
 
 ## Usage
 
-> **Setting up with an AI agent?** [`config-setup.md`](config-setup.md) is a skill for filling in `config.json` automatically with a browser MCP (e.g. `chrome-devtools-mcp`) - it covers steps 2–4 below.
+> [!TIP]
+> **Working with an AI agent?** [`config-setup.md`](config-setup.md) fills in `config.json` for you via a browser MCP (e.g. `chrome-devtools-mcp`, covering steps 2–4 below), and [`automation.md`](automation.md) is an automation prompt to run `ofd` unattended on a schedule — verifying auth, recovering from session expiry, and retrying failed downloads.
 
 1. Install this package. Use editable mode (`-e`) in case any troubleshooting is required. Python 3.10 or higher recommended.
 
