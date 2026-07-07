@@ -54,8 +54,6 @@ pydantic-core==2.46.4
     #   pydantic-xml
 pydantic-xml==2.21.0
     # via ofd (pyproject.toml)
-pyffmpeg==2.5.2.3.2
-    # via ofd (pyproject.toml)
 pymp4==1.4.0
     # via pywidevine
 pywidevine==1.9.0

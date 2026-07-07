@@ -6,19 +6,41 @@ import time
 import os
 import argparse
 import asyncio
-import logging
+import shutil
+import subprocess
 import urllib.parse
 import hashlib
+from uuid import UUID
 
 import pydantic
 import pydantic_xml
 import aiohttp
 import pywidevine
-import pyffmpeg  # type: ignore
 import tenacity
 import aiolimiter
 
 from tqdm import tqdm
+
+
+def ffmpeg_bin() -> str | None:
+    return shutil.which("ffmpeg")
+
+
+class FFmpegError(RuntimeError):
+    pass
+
+
+def run_ffmpeg(ffmpeg: str, args: Sequence[str]) -> None:
+    # argv holds the decryption key, so raise ffmpeg's stderr, not the argv
+    result = subprocess.run(
+        [ffmpeg, "-nostdin", "-loglevel", "error", *args],
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise FFmpegError(
+            f"ffmpeg exited with code {result.returncode}: {result.stderr.strip()}"
+        )
 
 
 class Endpoint:
@@ -716,7 +738,7 @@ class Downloader:
         # From DASH manifest
         video: MPD.Period.AdaptationSet.Representation | None = None
         audio: MPD.Period.AdaptationSet.Representation | None = None
-        protection: MPD.Period.AdaptationSet.ContentProtection | None = None
+        video_protection: MPD.Period.AdaptationSet.ContentProtection | None = None
 
         @property
         def license_url(self):
@@ -751,6 +773,9 @@ class Downloader:
     async def download_medias_drm(self, drm_medias: Sequence[DRMMedia]):
         if self.api.cdm is None:
             return
+        ffmpeg = ffmpeg_bin()
+        if ffmpeg is None:
+            raise RuntimeError("ffmpeg not found on PATH")
 
         # Get DASH manifest
 
@@ -769,12 +794,17 @@ class Downloader:
                     "Permission denied to retrieve manifest. Disconnect any VPN."
                 )
             mpd = MPD.from_xml(await response.read())
-            # All files in one manifest is protected by the same key
-            video, protection = mpd.get_media("video")
-            audio, _ = mpd.get_media("audio")
+            video, video_protection = mpd.get_media("video")
+            audio, audio_protection = mpd.get_media("audio")
+            # Both tracks decrypt with one key; catch a move to per-track keys
+            if UUID(video_protection.default_KID) != UUID(audio_protection.default_KID):
+                raise RuntimeError(
+                    f"Video KID {video_protection.default_KID} != audio KID "
+                    f"{audio_protection.default_KID}; OnlyFans DRM key scheme changed"
+                )
             drm.video = video
             drm.audio = audio
-            drm.protection = protection
+            drm.video_protection = video_protection
             progress.update()
 
         await asyncio.gather(*[add_manifest(drm) for drm in drm_medias])
@@ -811,11 +841,10 @@ class Downloader:
 
         progress = tqdm(total=len(drms), leave=False, desc="Decrypting drm")
         cdm = self.api.cdm
-        ffmpeg = pyffmpeg.FFmpeg()
         for drm in drms:
             assert drm.video is not None
             assert drm.audio is not None
-            assert drm.protection is not None
+            assert drm.video_protection is not None
 
             # Skip duplicated media
             # If raw file does not exist here, it means it appeared before and has been processed
@@ -828,57 +857,79 @@ class Downloader:
             # Do this synchronously as the license server has very strict rate limit
             session_id = cdm.open()
             challenge = cdm.get_license_challenge(
-                session_id, pywidevine.PSSH(drm.protection.pssh)
+                session_id, pywidevine.PSSH(drm.video_protection.pssh)
             )
             response = await self.api.session.post(drm.license_url, challenge)
             license_raw = await response.content.read()
             cdm.parse_license(session_id, license_raw)
 
-            key = next(k for k in cdm.get_keys(session_id) if k.type == "CONTENT")
+            content_keys = [
+                k for k in cdm.get_keys(session_id) if k.type == "CONTENT"
+            ]
             cdm.close(session_id)
+            # Expect one key matching the manifest KID; catch per-track/rotated keys
+            if len(content_keys) != 1:
+                raise RuntimeError(
+                    f"Expected 1 content key, got {len(content_keys)}; "
+                    "OnlyFans DRM key scheme changed"
+                )
+            key = content_keys[0]
+            if key.kid != UUID(drm.video_protection.default_KID):
+                raise RuntimeError(
+                    f"Content key KID {key.kid} != manifest KID "
+                    f"{drm.video_protection.default_KID}; OnlyFans DRM key scheme changed"
+                )
 
-            # Decrypt
+            # Decrypt and mux; skip this media if ffmpeg fails
             decrypted_video_path = f"{self.directory}/decrypted_{drm.video.base_url}"
             decrypted_audio_path = f"{self.directory}/decrypted_{drm.audio.base_url}"
-            for raw_path, decrypted_path in (
-                (raw_video_path, decrypted_video_path),
-                (raw_audio_path, decrypted_audio_path),
-            ):
-                ffmpeg.options(
+            final_path = f"{self.directory}/{drm.final_filename}"
+            try:
+                for raw_path, decrypted_path in (
+                    (raw_video_path, decrypted_video_path),
+                    (raw_audio_path, decrypted_audio_path),
+                ):
+                    run_ffmpeg(
+                        ffmpeg,
+                        [
+                            # -decryption_key must appear before -i
+                            "-decryption_key",
+                            key.key.hex(),
+                            "-i",
+                            raw_path,
+                            "-c",
+                            "copy",
+                            "-y",
+                            decrypted_path,
+                        ],
+                    )
+                    # Remove raw encrypted files
+                    os.remove(raw_path)
+
+                # Stich video and audio
+                run_ffmpeg(
+                    ffmpeg,
                     [
-                        # -decryption_key must appear before -i
-                        "-decryption_key",
-                        key.key.hex(),
                         "-i",
-                        raw_path,
+                        decrypted_video_path,
+                        "-i",
+                        decrypted_audio_path,
                         "-c",
                         "copy",
+                        "-movflags",
+                        "use_metadata_tags",
                         "-y",
-                        decrypted_path,
-                    ]
+                        final_path,
+                    ],
                 )
-                # Remove raw encrypted files
-                os.remove(raw_path)
-
-            # Stich video and audio
-            final_path = f"{self.directory}/{drm.final_filename}"
-            ffmpeg.options(
-                [
-                    "-i",
-                    decrypted_video_path,
-                    "-i",
-                    decrypted_audio_path,
-                    "-c",
-                    "copy",
-                    "-movflags",
-                    "use_metadata_tags",
-                    "-y",
-                    final_path,
-                ]
-            )
-            # Remove separate video and audio file
-            os.remove(decrypted_video_path)
-            os.remove(decrypted_audio_path)
+            except FFmpegError as error:
+                tqdm.write(f"Skipping {drm.final_filename}: {error}")
+                continue
+            finally:
+                # Always remove intermediate decrypted files
+                for path in (decrypted_video_path, decrypted_audio_path):
+                    if os.path.exists(path):
+                        os.remove(path)
             progress.update()
             assert os.path.exists(final_path), (
                 f"Decryption failed, missing final file {final_path}"
@@ -939,9 +990,6 @@ def print_result(counts: tuple[int, int]):
 
 
 async def async_main():
-    # Shut pyffmpeg up
-    logging.getLogger("pyffmpeg").handlers = []
-
     parser = argparse.ArgumentParser(description="Brutally simple OnlyFans downloader.")
     parser.add_argument(
         "--config",
@@ -975,6 +1023,9 @@ async def async_main():
             print_result(await downloader.download_messages())
             if downloader.api.cdm is None:
                 print("Skip DRM")
+                continue
+            if ffmpeg_bin() is None:
+                print("Skip DRM (ffmpeg not found on PATH)")
                 continue
             print("== Posts DRM")
             print_result(await downloader.download_posts_drm())

@@ -15,6 +15,8 @@ Brutally simple, lightning fast. One script that gets everything you paid for (D
    pip install -c requirements.txt -e .
    ```
 
+   Downloading DRM content also requires [`ffmpeg`](https://ffmpeg.org/download.html) on your `PATH` (e.g. `brew install ffmpeg`, `apt install ffmpeg`). It handles the decryption and muxing. Not needed for unprotected content.
+
 1. Make a copy of `config.json.tpl` and name it `config.json`.
 
    ```
