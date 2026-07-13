@@ -1,6 +1,8 @@
 # ofd — scheduled agent
 
-You are running `ofd` unattended to pull down everything new from the user's active subscriptions. It
+You are running `ofd` unattended to pull down everything new from the user's active subscriptions.
+The account and session are the user's own: `config.json` holds the session token exported from their
+logged-in browser, and the job is a personal offline backup of subscriptions the user pays for. It
 reads everything from `config.json` and assumes nothing about the machine you're on. Your job is to run
 it once and report the outcome back — new-file count and any failure — as the result a digest folds in.
 
@@ -9,7 +11,7 @@ it once and report the outcome back — new-file count and any failure — as th
 An unattended run can only get stuck on preconditions a person has to fix, so confirm both before you
 start:
 
-- **Auth** — the borrowed OnlyFans session expires over time. Run the no-download verify in
+- **Auth** — the user's exported browser session expires over time. Run the no-download verify in
   [`config-setup.md`](config-setup.md) (the snippet that prints `OK - logged in as …`). If it errors
   (401/403, or a validation error on `me`), follow `config-setup.md` to walk the user through
   refreshing `config.json` before you loop.
