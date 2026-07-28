@@ -322,10 +322,11 @@ class MPD(pydantic_xml.BaseXmlModel, nsmap=mpd_nsmap):
                 )
 
     def get_media(self, mime_prefix: Literal["video", "audio"]):
-        aset = next(
-            a for a in self.period.adaptation_sets if a.mimeType.startswith(mime_prefix)
-        )
-        return aset._get_media()
+        # None if absent: audio-only media has no video adaptation set
+        for a in self.period.adaptation_sets:
+            if a.mimeType.startswith(mime_prefix):
+                return a._get_media()
+        return None
 
 
 class Session:
@@ -738,7 +739,8 @@ class Downloader:
         # From DASH manifest
         video: MPD.Period.AdaptationSet.Representation | None = None
         audio: MPD.Period.AdaptationSet.Representation | None = None
-        video_protection: MPD.Period.AdaptationSet.ContentProtection | None = None
+        # From the video track, or the audio track for audio-only media
+        protection: MPD.Period.AdaptationSet.ContentProtection | None = None
 
         @property
         def license_url(self):
@@ -750,6 +752,7 @@ class Downloader:
 
         @property
         def video_url(self):
+            assert self.video is not None
             return (
                 self.media.files.drm.manifest.dash.rsplit("/", 1)[0]
                 + "/"
@@ -766,8 +769,10 @@ class Downloader:
 
         @property
         def final_filename(self):
-            # Suffix raw video filename with "_drm"
-            name, extension = self.video.base_url.rsplit(".", 1)
+            # Suffix raw video (or audio, for audio-only media) filename with "_drm"
+            track = self.video if self.video is not None else self.audio
+            assert track is not None
+            name, extension = track.base_url.rsplit(".", 1)
             return f"{name}_drm.{extension}"
 
     async def download_medias_drm(self, drm_medias: Sequence[DRMMedia]):
@@ -794,21 +799,45 @@ class Downloader:
                     "Permission denied to retrieve manifest. Disconnect any VPN."
                 )
             mpd = MPD.from_xml(await response.read())
-            video, video_protection = mpd.get_media("video")
-            audio, audio_protection = mpd.get_media("audio")
-            # Both tracks decrypt with one key; catch a move to per-track keys
-            if UUID(video_protection.default_KID) != UUID(audio_protection.default_KID):
-                raise RuntimeError(
-                    f"Video KID {video_protection.default_KID} != audio KID "
-                    f"{audio_protection.default_KID}; OnlyFans DRM key scheme changed"
-                )
-            drm.video = video
+            video_media = mpd.get_media("video")
+            audio_media = mpd.get_media("audio")
+            if audio_media is None:
+                raise RuntimeError("Manifest has no audio adaptation set")
+            audio, audio_protection = audio_media
             drm.audio = audio
-            drm.video_protection = video_protection
+            drm.protection = audio_protection
+            # Audio-only media has no video track
+            if video_media is not None:
+                video, video_protection = video_media
+                # Both tracks decrypt with one key; catch a move to per-track keys
+                if UUID(video_protection.default_KID) != UUID(audio_protection.default_KID):
+                    raise RuntimeError(
+                        f"Video KID {video_protection.default_KID} != audio KID "
+                        f"{audio_protection.default_KID}; OnlyFans DRM key scheme changed"
+                    )
+                drm.video = video
+                drm.protection = video_protection
             progress.update()
 
-        await asyncio.gather(*[add_manifest(drm) for drm in drm_medias])
+        # One bad manifest must not abort the rest of the batch
+        results = await asyncio.gather(
+            *[add_manifest(drm) for drm in drm_medias], return_exceptions=True
+        )
         progress.close()
+        indexed = []
+        for drm, result in zip(drm_medias, results):
+            if isinstance(result, BaseException):
+                assert drm.media.files.drm is not None
+                tqdm.write(
+                    f"Skipping manifest {drm.media.files.drm.manifest.dash}: {result}"
+                )
+            else:
+                indexed.append(drm)
+        if drm_medias and not indexed:
+            # Every manifest failed (e.g. 403 on VPN); surface the shared cause
+            first = results[0]
+            assert isinstance(first, BaseException)
+            raise first
 
         # Download raw encrypted content
 
@@ -817,18 +846,19 @@ class Downloader:
         )
         # Filter for drm that are not already downloaded
         drms = [
-            drm for drm in drm_medias if not self.is_file_downloaded(drm.final_filename)
+            drm for drm in indexed if not self.is_file_downloaded(drm.final_filename)
         ]
-        already_downloaded_count = len(drm_medias) - len(drms)
+        already_downloaded_count = len(indexed) - len(drms)
         # Filter for files need to be downloaded
         urls = []
         cookies = []
         for drm in drms:
-            assert drm.video is not None
             assert drm.audio is not None
             assert drm.media.files.drm is not None
 
-            if not self.is_file_downloaded(drm.video.base_url):
+            if drm.video is not None and not self.is_file_downloaded(
+                drm.video.base_url
+            ):
                 urls.append(drm.video_url)
                 cookies.append(drm.media.files.drm.signature.dash)
             if not self.is_file_downloaded(drm.audio.base_url):
@@ -842,22 +872,27 @@ class Downloader:
         progress = tqdm(total=len(drms), leave=False, desc="Decrypting drm")
         cdm = self.api.cdm
         for drm in drms:
-            assert drm.video is not None
             assert drm.audio is not None
-            assert drm.video_protection is not None
+            assert drm.protection is not None
 
             # Skip duplicated media
             # If raw file does not exist here, it means it appeared before and has been processed
-            raw_video_path = f"{self.directory}/{drm.video.base_url}"
+            raw_video_path = (
+                f"{self.directory}/{drm.video.base_url}"
+                if drm.video is not None
+                else None
+            )
             raw_audio_path = f"{self.directory}/{drm.audio.base_url}"
-            if not os.path.exists(raw_video_path) or not os.path.exists(raw_audio_path):
+            if raw_video_path is not None and not os.path.exists(raw_video_path):
+                continue
+            if not os.path.exists(raw_audio_path):
                 continue
 
             # Get key
             # Do this synchronously as the license server has very strict rate limit
             session_id = cdm.open()
             challenge = cdm.get_license_challenge(
-                session_id, pywidevine.PSSH(drm.video_protection.pssh)
+                session_id, pywidevine.PSSH(drm.protection.pssh)
             )
             response = await self.api.session.post(drm.license_url, challenge)
             license_raw = await response.content.read()
@@ -874,21 +909,25 @@ class Downloader:
                     "OnlyFans DRM key scheme changed"
                 )
             key = content_keys[0]
-            if key.kid != UUID(drm.video_protection.default_KID):
+            if key.kid != UUID(drm.protection.default_KID):
                 raise RuntimeError(
                     f"Content key KID {key.kid} != manifest KID "
-                    f"{drm.video_protection.default_KID}; OnlyFans DRM key scheme changed"
+                    f"{drm.protection.default_KID}; OnlyFans DRM key scheme changed"
                 )
 
             # Decrypt and mux; skip this media if ffmpeg fails
-            decrypted_video_path = f"{self.directory}/decrypted_{drm.video.base_url}"
+            decrypted_video_path = (
+                f"{self.directory}/decrypted_{drm.video.base_url}"
+                if drm.video is not None
+                else None
+            )
             decrypted_audio_path = f"{self.directory}/decrypted_{drm.audio.base_url}"
             final_path = f"{self.directory}/{drm.final_filename}"
             try:
-                for raw_path, decrypted_path in (
-                    (raw_video_path, decrypted_video_path),
-                    (raw_audio_path, decrypted_audio_path),
-                ):
+                tracks = [(raw_audio_path, decrypted_audio_path)]
+                if raw_video_path is not None and decrypted_video_path is not None:
+                    tracks.insert(0, (raw_video_path, decrypted_video_path))
+                for raw_path, decrypted_path in tracks:
                     run_ffmpeg(
                         ffmpeg,
                         [
@@ -906,36 +945,40 @@ class Downloader:
                     # Remove raw encrypted files
                     os.remove(raw_path)
 
-                # Stich video and audio
-                run_ffmpeg(
-                    ffmpeg,
-                    [
-                        "-i",
-                        decrypted_video_path,
-                        "-i",
-                        decrypted_audio_path,
-                        "-c",
-                        "copy",
-                        "-movflags",
-                        "use_metadata_tags",
-                        "-y",
-                        final_path,
-                    ],
-                )
+                if decrypted_video_path is None:
+                    # Audio-only: the decrypted audio track is the final file
+                    os.replace(decrypted_audio_path, final_path)
+                else:
+                    # Stich video and audio
+                    run_ffmpeg(
+                        ffmpeg,
+                        [
+                            "-i",
+                            decrypted_video_path,
+                            "-i",
+                            decrypted_audio_path,
+                            "-c",
+                            "copy",
+                            "-movflags",
+                            "use_metadata_tags",
+                            "-y",
+                            final_path,
+                        ],
+                    )
             except FFmpegError as error:
                 tqdm.write(f"Skipping {drm.final_filename}: {error}")
                 continue
             finally:
                 # Always remove intermediate decrypted files
                 for path in (decrypted_video_path, decrypted_audio_path):
-                    if os.path.exists(path):
+                    if path is not None and os.path.exists(path):
                         os.remove(path)
             progress.update()
             assert os.path.exists(final_path), (
                 f"Decryption failed, missing final file {final_path}"
             )
         progress.close()
-        return (len(drm_medias) - already_downloaded_count, already_downloaded_count)
+        return (len(indexed) - already_downloaded_count, already_downloaded_count)
 
     async def download_posts_drm(self) -> tuple[int, int]:
         with tqdm(
