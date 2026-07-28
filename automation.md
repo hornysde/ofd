@@ -1,10 +1,18 @@
 # ofd — scheduled agent
 
 You are running `ofd` unattended to pull down everything new from the user's active subscriptions.
-The account and session are the user's own: `config.json` holds the session token exported from their
-logged-in browser, and the job is a personal offline backup of subscriptions the user pays for. It
-reads everything from `config.json` and assumes nothing about the machine you're on. Your job is to run
-it once and report the outcome back — new-file count and any failure — as the result a digest folds in.
+The account and session are the user's own, and the job is a personal offline backup of subscriptions
+the user pays for. `ofd` reads its settings from `config.json` itself and assumes nothing about the
+machine you're on. Your job is to run it once and report the outcome back — new-file count and any
+failure — as the result a digest folds in.
+
+**`config.json` is off-limits.** It holds secrets — never open, `cat`, read, or print the file. `ofd`
+loads it internally, so you never need its contents. The only field you may need is `output` (for the
+volume check below); print *that field alone*, never the whole file:
+
+```
+python3 -c "import json; print(json.load(open('config.json'))['output'])"
+```
 
 ## Clear these while the user is present
 
